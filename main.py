@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+
+from fastapi import FastAPI
 
 import database
+from routers import auth
 
 
 @asynccontextmanager
@@ -15,15 +17,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Compartir gastos", lifespan=lifespan)
 
 
+app.include_router(auth.router)
+
+
 @app.get("/")
 def raiz():
     return {"mensaje": "API de Compartir gastos funcionando"}
-
-
-
-@app.get("/salud-bd")
-async def salud_bd(conexion=Depends(database.get_conexion)):
-    async with conexion.cursor() as cursor:
-        await cursor.execute("SELECT COUNT(*) AS total FROM usuarios")
-        fila = await cursor.fetchone()
-    return {"bd": "conectada", "usuarios": fila["total"]}
