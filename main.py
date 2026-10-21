@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 import database
-from routers import auth
+from routers import auth, grupos
 
 
 @asynccontextmanager
@@ -18,6 +18,7 @@ app = FastAPI(title="Compartir gastos", lifespan=lifespan)
 
 
 app.include_router(auth.router)
+app.include_router(grupos.router)
 
 
 @app.get("/")
