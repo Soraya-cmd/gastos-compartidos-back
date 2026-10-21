@@ -100,3 +100,25 @@ class GrupoDetalle(BaseModel):
     gastos: list[GastoRespuesta]
     miembros: list[MiembroRespuesta]
     pagos: list[PagoRespuesta]
+
+
+
+
+
+class MiembroNuevo(BaseModel):
+    """Invitar a alguien (ya registrado) con el porcentaje que le toca pagar."""
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=150)
+    porcentaje: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class PorcentajeCambio(BaseModel):
+    """Cambiar el porcentaje de un miembro."""
+    porcentaje: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class PagoNuevo(BaseModel):
+    """Anotar un pago que alguien ha hecho (el dinero se mueve fuera de la app)."""
+    usuario_id: int
+    importe: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    fecha: date | None = None          # si no se indica, se usa la de hoy
+    nota: str = Field(default="", max_length=255)

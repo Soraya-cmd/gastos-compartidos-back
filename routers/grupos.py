@@ -1,9 +1,13 @@
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 import database
-from schemas import GrupoDetalle, GrupoNuevo, GrupoResumen
+from schemas import (
+    GastoNuevo, GrupoDetalle, GrupoNuevo, GrupoResumen,
+    MiembroNuevo, PagoNuevo, PorcentajeCambio,
+)
 from security import usuario_actual
 
 
@@ -183,4 +187,196 @@ async def detalle_grupo(
     conexion=Depends(database.get_conexion),
 ):
     """Detalle del grupo con gastos, miembros, pagos y deudas. Lo ve cualquier miembro."""
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+
+
+
+async def exigir_creador(conexion, grupo_id: int, usuario_id: int):
+    """Comprueba que la persona es el creador del grupo.
+    - Si no es miembro: 404 (ni siquiera sabe que el grupo existe).
+    - Si es miembro pero no creador: 403 (solo puede mirar)."""
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            """SELECT g.creador_id
+               FROM grupos g
+               JOIN miembros_grupo m ON m.grupo_id = g.id
+               WHERE g.id = %s AND m.usuario_id = %s""",
+            (grupo_id, usuario_id),
+        )
+        fila = await cursor.fetchone()
+    if fila is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    if fila["creador_id"] != usuario_id:
+        raise HTTPException(status_code=403, detail="Solo el creador del grupo puede hacer esto")
+
+
+async def comprobar_porcentaje(cursor, grupo_id: int, nuevo: Decimal, excluir_usuario_id=None):
+    """Evita que los porcentajes del grupo sumen más de 100."""
+    sql = "SELECT COALESCE(SUM(porcentaje), 0) AS suma FROM miembros_grupo WHERE grupo_id = %s"
+    parametros = [grupo_id]
+    if excluir_usuario_id is not None:
+    
+        sql += " AND usuario_id <> %s"
+        parametros.append(excluir_usuario_id)
+    await cursor.execute(sql, parametros)
+    suma = (await cursor.fetchone())["suma"]
+    if suma + nuevo > 100:
+        libre = Decimal("100") - suma
+        raise HTTPException(
+            status_code=422,
+            detail=f"Los porcentajes no pueden superar el 100 %. Quedan {libre} % por asignar",
+        )
+
+
+@router.post("/{grupo_id}/miembros", response_model=GrupoDetalle, status_code=status.HTTP_201_CREATED)
+async def invitar_miembro(
+    grupo_id: int,
+    datos: MiembroNuevo,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Invita a una persona ya registrada, con su porcentaje."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+    email = datos.email.strip().lower()
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute("SELECT id FROM usuarios WHERE email = %s", (email,))
+        invitado = await cursor.fetchone()
+        if invitado is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No existe ningún usuario con ese email. Debe registrarse primero",
+            )
+
+        await cursor.execute(
+            "SELECT id FROM miembros_grupo WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, invitado["id"]),
+        )
+        if await cursor.fetchone():
+            raise HTTPException(status_code=409, detail="Esa persona ya está en el grupo")
+
+        await comprobar_porcentaje(cursor, grupo_id, datos.porcentaje)
+
+        await cursor.execute(
+            "INSERT INTO miembros_grupo (grupo_id, usuario_id, porcentaje) VALUES (%s, %s, %s)",
+            (grupo_id, invitado["id"], datos.porcentaje),
+        )
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+@router.put("/{grupo_id}/miembros/{usuario_id}", response_model=GrupoDetalle)
+async def cambiar_porcentaje(
+    grupo_id: int,
+    usuario_id: int,
+    datos: PorcentajeCambio,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Cambia el porcentaje de un miembro (también el del propio creador)."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "SELECT id FROM miembros_grupo WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, usuario_id),
+        )
+        if await cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Esa persona no pertenece al grupo")
+
+        await comprobar_porcentaje(cursor, grupo_id, datos.porcentaje, excluir_usuario_id=usuario_id)
+
+        await cursor.execute(
+            "UPDATE miembros_grupo SET porcentaje = %s WHERE grupo_id = %s AND usuario_id = %s",
+            (datos.porcentaje, grupo_id, usuario_id),
+        )
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+@router.post("/{grupo_id}/gastos", response_model=GrupoDetalle, status_code=status.HTTP_201_CREATED)
+async def anadir_gasto(
+    grupo_id: int,
+    datos: GastoNuevo,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Añade un gasto más al desglose del grupo."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "INSERT INTO gastos (grupo_id, concepto, categoria, importe) VALUES (%s, %s, %s, %s)",
+            (grupo_id, datos.concepto.strip(), datos.categoria, datos.importe),
+        )
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+@router.delete("/{grupo_id}/gastos/{gasto_id}", response_model=GrupoDetalle)
+async def borrar_gasto(
+    grupo_id: int,
+    gasto_id: int,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Borra un gasto (por ejemplo, si se anotó por error)."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "DELETE FROM gastos WHERE id = %s AND grupo_id = %s", (gasto_id, grupo_id)
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Gasto no encontrado")
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+@router.post("/{grupo_id}/pagos", response_model=GrupoDetalle, status_code=status.HTTP_201_CREATED)
+async def anotar_pago(
+    grupo_id: int,
+    datos: PagoNuevo,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Anota un pago que ya se ha hecho fuera de la app. La deuda se recalcula sola."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "SELECT id FROM miembros_grupo WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, datos.usuario_id),
+        )
+        if await cursor.fetchone() is None:
+            raise HTTPException(status_code=422, detail="Esa persona no pertenece al grupo")
+
+        await cursor.execute(
+            "INSERT INTO pagos (grupo_id, usuario_id, importe, fecha, nota) VALUES (%s, %s, %s, %s, %s)",
+            (grupo_id, datos.usuario_id, datos.importe,
+             datos.fecha or date.today(), datos.nota.strip() or None),
+        )
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+@router.delete("/{grupo_id}/pagos/{pago_id}", response_model=GrupoDetalle)
+async def borrar_pago(
+    grupo_id: int,
+    pago_id: int,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Borra un pago anotado por error."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "DELETE FROM pagos WHERE id = %s AND grupo_id = %s", (pago_id, grupo_id)
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Pago no encontrado")
+
     return await construir_detalle(conexion, grupo_id, usuario["id"])
