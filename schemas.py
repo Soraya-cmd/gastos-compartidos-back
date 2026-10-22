@@ -1,0 +1,140 @@
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+Categoria = Literal["cena", "alojamiento", "actividades", "transporte", "otros"]
+
+
+class UsuarioRegistro(BaseModel):
+    """Datos que envía una persona al registrarse."""
+    nombre: str = Field(min_length=2, max_length=100)
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=150)
+    password: str = Field(min_length=6, max_length=72)
+
+
+class UsuarioLogin(BaseModel):
+    """Datos que envía una persona al iniciar sesión."""
+    email: str
+    password: str
+
+
+class UsuarioRespuesta(BaseModel):
+    """Lo que devolvemos de un usuario. Nunca incluye la contraseña."""
+    id: int
+    nombre: str
+    email: str
+
+
+class Token(BaseModel):
+    """La 'pulsera' que recibe el usuario al iniciar sesión."""
+    access_token: str
+    token_type: str
+
+
+
+class GastoNuevo(BaseModel):
+    """Un gasto del desglose (por ejemplo, la cena del sábado)."""
+    concepto: str = Field(min_length=2, max_length=150)
+    categoria: Categoria = "otros"
+    importe: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+
+
+class GrupoNuevo(BaseModel):
+    """Datos para crear un grupo: título, descripción y al menos un gasto."""
+    titulo: str = Field(min_length=2, max_length=150)
+    descripcion: str = Field(default="", max_length=2000)
+    gastos: list[GastoNuevo] = Field(min_length=1)
+
+
+class GastoRespuesta(BaseModel):
+    id: int
+    concepto: str
+    categoria: str
+    importe: float
+
+
+class MiembroRespuesta(BaseModel):
+    usuario_id: int
+    nombre: str
+    email: str
+    es_creador: bool
+    porcentaje: float   
+    debe: float         
+    pagado: float       
+    pendiente: float   
+
+
+class PagoRespuesta(BaseModel):
+    id: int
+    usuario_id: int
+    nombre: str
+    importe: float
+    fecha: date
+    nota: str | None = None
+
+
+class GrupoResumen(BaseModel):
+    """Una fila de la lista 'mis grupos'."""
+    id: int
+    titulo: str
+    descripcion: str
+    total: float
+    rol: str            
+
+
+class GrupoDetalle(BaseModel):
+    """Todo lo que se ve al abrir un grupo."""
+    id: int
+    titulo: str
+    descripcion: str
+    creador_id: int
+    soy_creador: bool
+    total: float
+    porcentaje_asignado: float
+    reparto_completo: bool   
+    total_pagado: float
+    total_pendiente: float
+    gastos: list[GastoRespuesta]
+    miembros: list[MiembroRespuesta]
+    pagos: list[PagoRespuesta]
+
+
+
+
+
+class MiembroNuevo(BaseModel):
+    """Invitar a alguien (ya registrado) con el porcentaje que le toca pagar."""
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=150)
+    porcentaje: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class PorcentajeCambio(BaseModel):
+    """Cambiar el porcentaje de un miembro."""
+    porcentaje: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class PagoNuevo(BaseModel):
+    """Anotar un pago que alguien ha hecho (el dinero se mueve fuera de la app)."""
+    usuario_id: int
+    importe: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    fecha: date | None = None         
+    nota: str = Field(default="", max_length=255)
+
+
+    
+
+# ---------- Mensajería ----------
+class MensajeNuevo(BaseModel):
+    """Un mensaje que escribe un miembro del grupo."""
+    contenido: str = Field(min_length=1, max_length=1000)
+
+
+class MensajeRespuesta(BaseModel):
+    id: int
+    usuario_id: int
+    nombre: str
+    contenido: str
+    creado_en: datetime

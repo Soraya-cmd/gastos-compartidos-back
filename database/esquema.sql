@@ -27,6 +27,7 @@ CREATE TABLE gastos (
   id INT AUTO_INCREMENT PRIMARY KEY,
   grupo_id INT NOT NULL,
   concepto VARCHAR(150) NOT NULL,
+  categoria ENUM('cena','alojamiento','actividades','transporte','otros') NOT NULL DEFAULT 'otros',
   importe DECIMAL(10,2) NOT NULL,
   creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (grupo_id) REFERENCES grupos(id) ON DELETE CASCADE
