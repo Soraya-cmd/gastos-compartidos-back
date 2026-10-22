@@ -1,8 +1,22 @@
+import ssl
+
 import aiomysql
-from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_SSL
 
 
 pool = None
+
+
+def crear_contexto_ssl():
+    """Si DB_SSL es true, devuelve la configuración para conectar con SSL
+    (conexión cifrada). Si no, devuelve None y se conecta como siempre."""
+    if not DB_SSL:
+        return None
+    contexto = ssl.create_default_context()
+  
+    contexto.check_hostname = False
+    contexto.verify_mode = ssl.CERT_NONE
+    return contexto
 
 
 async def crear_pool():
@@ -15,8 +29,9 @@ async def crear_pool():
         password=DB_PASSWORD,
         db=DB_NAME,
         charset="utf8mb4",
-        autocommit=True,                  # guarda los cambios automáticamente
-        cursorclass=aiomysql.DictCursor,  # devuelve cada fila como diccionario
+        autocommit=True,                  
+        cursorclass=aiomysql.DictCursor,  
+        ssl=crear_contexto_ssl(),         
     )
 
 
