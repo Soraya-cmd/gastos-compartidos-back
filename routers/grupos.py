@@ -7,6 +7,7 @@ import database
 from schemas import (
     GastoNuevo, GrupoDetalle, GrupoNuevo, GrupoResumen,
     MiembroNuevo, PagoNuevo, PorcentajeCambio,
+    MensajeNuevo, MensajeRespuesta, MiembroNuevo, PagoNuevo, PorcentajeCambio,
 )
 from security import usuario_actual
 
@@ -459,3 +460,76 @@ async def repartir_igual(
         raise
 
     return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+
+
+
+
+
+
+async def exigir_miembro(conexion, grupo_id: int, usuario_id: int):
+    """Comprueba que la persona pertenece al grupo. Si no, 404."""
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "SELECT id FROM miembros_grupo WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, usuario_id),
+        )
+        if await cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Grupo no encontrado")
+
+
+@router.get("/{grupo_id}/mensajes", response_model=list[MensajeRespuesta])
+async def listar_mensajes(
+    grupo_id: int,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Devuelve los últimos 200 mensajes del grupo, del más antiguo al más nuevo."""
+    await exigir_miembro(conexion, grupo_id, usuario["id"])
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            """SELECT m.id, m.usuario_id, u.nombre, m.contenido, m.creado_en
+               FROM mensajes m
+               JOIN usuarios u ON u.id = m.usuario_id
+               WHERE m.grupo_id = %s
+               ORDER BY m.id DESC
+               LIMIT 200""",
+            (grupo_id,),
+        )
+        filas = await cursor.fetchall()
+
+    
+    return list(reversed(filas))
+
+
+@router.post("/{grupo_id}/mensajes", response_model=MensajeRespuesta, status_code=status.HTTP_201_CREATED)
+async def enviar_mensaje(
+    grupo_id: int,
+    datos: MensajeNuevo,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Un miembro del grupo (creador o invitado) escribe un mensaje."""
+    await exigir_miembro(conexion, grupo_id, usuario["id"])
+
+    contenido = datos.contenido.strip()
+    if not contenido:
+        raise HTTPException(status_code=422, detail="El mensaje no puede estar vacío")
+
+    async with conexion.cursor() as cursor:
+        await cursor.execute(
+            "INSERT INTO mensajes (grupo_id, usuario_id, contenido) VALUES (%s, %s, %s)",
+            (grupo_id, usuario["id"], contenido),
+        )
+        nuevo_id = cursor.lastrowid
+
+        await cursor.execute(
+            """SELECT m.id, m.usuario_id, u.nombre, m.contenido, m.creado_en
+               FROM mensajes m
+               JOIN usuarios u ON u.id = m.usuario_id
+               WHERE m.id = %s""",
+            (nuevo_id,),
+        )
+        return await cursor.fetchone()

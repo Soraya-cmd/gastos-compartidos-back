@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -120,5 +120,21 @@ class PagoNuevo(BaseModel):
     """Anotar un pago que alguien ha hecho (el dinero se mueve fuera de la app)."""
     usuario_id: int
     importe: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
-    fecha: date | None = None          # si no se indica, se usa la de hoy
+    fecha: date | None = None         
     nota: str = Field(default="", max_length=255)
+
+
+    
+
+# ---------- Mensajería ----------
+class MensajeNuevo(BaseModel):
+    """Un mensaje que escribe un miembro del grupo."""
+    contenido: str = Field(min_length=1, max_length=1000)
+
+
+class MensajeRespuesta(BaseModel):
+    id: int
+    usuario_id: int
+    nombre: str
+    contenido: str
+    creado_en: datetime
