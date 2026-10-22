@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -378,5 +378,84 @@ async def borrar_pago(
         )
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+
+
+
+@router.delete("/{grupo_id}/miembros/{usuario_id}", response_model=GrupoDetalle)
+async def quitar_miembro(
+    grupo_id: int,
+    usuario_id: int,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Quita a una persona del grupo (solo el creador, y nunca al propio creador)."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    
+
+    if usuario_id == usuario["id"]:
+        raise HTTPException(status_code=422, detail="El creador no puede salir del grupo")
+
+    async with conexion.cursor() as cursor:
+       
+        await cursor.execute(
+            "SELECT COUNT(*) AS total FROM pagos WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, usuario_id),
+        )
+        if (await cursor.fetchone())["total"] > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Esa persona tiene pagos anotados. Bórralos primero",
+            )
+
+        await cursor.execute(
+            "DELETE FROM miembros_grupo WHERE grupo_id = %s AND usuario_id = %s",
+            (grupo_id, usuario_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Esa persona no pertenece al grupo")
+
+    return await construir_detalle(conexion, grupo_id, usuario["id"])
+
+
+
+
+@router.post("/{grupo_id}/repartir-igual", response_model=GrupoDetalle)
+async def repartir_igual(
+    grupo_id: int,
+    usuario=Depends(usuario_actual),
+    conexion=Depends(database.get_conexion),
+):
+    """Reparte el 100 % a partes iguales entre todos los miembros (solo el creador).
+    Los céntimos que sobran al dividir se los queda el creador, para sumar justo 100."""
+    await exigir_creador(conexion, grupo_id, usuario["id"])
+
+    await conexion.begin()
+    try:
+        async with conexion.cursor() as cursor:
+            await cursor.execute(
+                "SELECT usuario_id FROM miembros_grupo WHERE grupo_id = %s", (grupo_id,)
+            )
+            miembros = await cursor.fetchall()
+            cantidad = len(miembros)
+
+           
+            base = (Decimal("100") / cantidad).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+            sobrante = Decimal("100") - base * cantidad   # ej.: 0,01
+
+            for m in miembros:
+                porcentaje = base + (sobrante if m["usuario_id"] == usuario["id"] else 0)
+                await cursor.execute(
+                    "UPDATE miembros_grupo SET porcentaje = %s WHERE grupo_id = %s AND usuario_id = %s",
+                    (porcentaje, grupo_id, m["usuario_id"]),
+                )
+        await conexion.commit()
+    except Exception:
+        await conexion.rollback()
+        raise
 
     return await construir_detalle(conexion, grupo_id, usuario["id"])
