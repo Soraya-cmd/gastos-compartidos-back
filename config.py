@@ -10,6 +10,7 @@ DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_NAME = os.getenv("DB_NAME")
 SECRET_KEY = os.getenv("SECRET_KEY")
+DB_SSL = os.getenv("DB_SSL", "false").lower() == "true"
 
 
 for nombre, valor in [("DB_USER", DB_USER), ("DB_PASSWORD", DB_PASSWORD),
@@ -20,8 +21,6 @@ for nombre, valor in [("DB_USER", DB_USER), ("DB_PASSWORD", DB_PASSWORD),
 
 
 
-
-    
 
 
 CORS_ORIGINS = [
